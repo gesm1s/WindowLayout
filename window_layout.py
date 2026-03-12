@@ -18,6 +18,8 @@ import Quartz
 from Quartz import CGDisplayBounds
 
 SAVE_FILE = os.path.expanduser("~/.window_layouts.json")
+SETTINGS_FILE = os.path.expanduser("~/.window_layouts_settings.json")
+STARTUP_DELAY = 30  # seconds to wait before auto-restoring at startup
 
 SKIP_APPS = frozenset((
     "Dock", "Window Server", "SystemUIServer", "Control Center",
@@ -140,6 +142,18 @@ def save_layouts(data):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+def load_settings():
+    if os.path.exists(SETTINGS_FILE):
+        with open(SETTINGS_FILE) as f:
+            return json.load(f)
+    return {"auto_restore": True}
+
+
+def save_settings(data):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
 # ── Dialogs (AppKit) ─────────────────────────────────────────────
 
 def show_alert(message, info=""):
@@ -192,6 +206,7 @@ class AppDelegate(AppKit.NSObject):
 
     def applicationDidFinishLaunching_(self, notification):
         self.layouts = load_layouts()
+        self.settings = load_settings()
         self._last_fingerprint = display_fingerprint()
 
         # Create status bar icon
@@ -216,6 +231,24 @@ class AppDelegate(AppKit.NSObject):
             AppKit.NSApplicationDidChangeScreenParametersNotification,
             None,
         )
+
+        # Schedule auto-restore after startup delay
+        if self.settings.get("auto_restore", True):
+            AppKit.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                STARTUP_DELAY, self,
+                objc.selector(self.startupRestore_, signature=b"v@:@"),
+                None, False,
+            )
+
+    def startupRestore_(self, timer):
+        """Auto-restore matching layout after startup delay."""
+        fp = display_fingerprint()
+        matching = [
+            n for n, v in self.layouts.items()
+            if v.get("display_fingerprint") == fp
+        ]
+        if len(matching) == 1:
+            self._do_restore(matching[0], notify=True, open_apps=False)
 
     def rebuild_menu(self):
         self.layouts = load_layouts()
@@ -313,6 +346,18 @@ class AppDelegate(AppKit.NSObject):
             menu.addItem_(delete_parent)
             menu.setSubmenu_forItem_(delete_menu, delete_parent)
 
+        # Auto-restore toggle
+        menu.addItem_(AppKit.NSMenuItem.separatorItem())
+        auto_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Auto-restore on startup", "toggleAutoRestore:", ""
+        )
+        auto_item.setTarget_(self)
+        if self.settings.get("auto_restore", True):
+            auto_item.setState_(AppKit.NSControlStateValueOn)
+        else:
+            auto_item.setState_(AppKit.NSControlStateValueOff)
+        menu.addItem_(auto_item)
+
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         quit_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Quit", "terminate:", "q"
@@ -351,16 +396,20 @@ class AppDelegate(AppKit.NSObject):
                 f"{len(windows)} windows · {desc}",
             )
 
-    def _do_restore(self, name, notify=False):
-        """Restore a layout by name. If notify=True, show a notification instead of an alert."""
+    def _do_restore(self, name, notify=False, open_apps=True):
+        """Restore a layout by name.
+        
+        open_apps=False only repositions already-open windows (used at startup).
+        """
         info = self.layouts.get(name, {})
         layout = info.get("windows", info if isinstance(info, list) else [])
-        apps_seen = set()
-        for win in layout:
-            if win["app"] not in apps_seen:
-                subprocess.run(["open", "-a", win["app"]], capture_output=True)
-                apps_seen.add(win["app"])
-        time.sleep(1.5)
+        if open_apps:
+            apps_seen = set()
+            for win in layout:
+                if win["app"] not in apps_seen:
+                    subprocess.run(["open", "-a", win["app"]], capture_output=True)
+                    apps_seen.add(win["app"])
+            time.sleep(1.5)
         for win in layout:
             restore_window(
                 win["app"], win["title"],
@@ -384,6 +433,13 @@ class AppDelegate(AppKit.NSObject):
             self.layouts.pop(name, None)
             save_layouts(self.layouts)
             self.rebuild_menu()
+
+    @objc.IBAction
+    def toggleAutoRestore_(self, sender):
+        current = self.settings.get("auto_restore", True)
+        self.settings["auto_restore"] = not current
+        save_settings(self.settings)
+        self.rebuild_menu()
 
     # ── Display change ───────────────────────────────────────────
 

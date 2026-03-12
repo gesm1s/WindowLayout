@@ -9,7 +9,8 @@ Save and restore window layouts on macOS. Automatically detects your display con
 - **Menu bar app** — lives in your menu bar as a small window icon
 - **Save named layouts** — save your current window positions with a custom name
 - **Restore layouts** — restore any saved layout with one click
-- **Auto-restore** — automatically restores your layout when you switch between display configurations (e.g., plugging in a monitor)
+- **Auto-restore on display change** — automatically restores your layout when you connect or disconnect monitors
+- **Auto-restore on startup** — after a configurable delay (30s), restores the matching layout when your Mac boots up
 - **Display detection** — identifies your setup (laptop only, laptop + external, etc.) and groups saved layouts accordingly
 - **Multiple profiles** — save different layouts for different display setups (work, home, laptop)
 
@@ -52,7 +53,8 @@ The app will be in `dist/WindowLayout.app`.
 1. **Launch** — A small window icon appears in your menu bar
 2. **Save a layout** — Arrange your windows how you like, then click the menu bar icon → **Save layout...** → enter a name
 3. **Restore a layout** — Click the menu bar icon → select a saved layout
-4. **Auto-restore** — When you connect/disconnect a monitor and there's exactly one saved layout matching that display config, it restores automatically
+4. **Auto-restore on display change** — When you connect/disconnect a monitor and there's exactly one saved layout matching that display config, it restores automatically
+5. **Auto-restore on startup** — If enabled (on by default), WindowLayout waits 30 seconds after launch to let apps open, then repositions windows to match your saved layout. Toggle this in the menu under **Auto-restore on startup**.
 
 ### Permissions
 
@@ -80,6 +82,7 @@ To launch WindowLayout automatically:
 | `setup.py` | py2app build configuration |
 | `gen_icon.py` | Generates the app icon (`WindowLayout.icns`) |
 | `~/.window_layouts.json` | Saved layouts (created at runtime) |
+| `~/.window_layouts_settings.json` | Settings — auto-restore toggle (created at runtime) |
 
 ## License
 
