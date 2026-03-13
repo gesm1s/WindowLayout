@@ -250,6 +250,17 @@ class AppDelegate(AppKit.NSObject):
         if len(matching) == 1:
             self._do_restore(matching[0], notify=True, open_apps=False)
 
+    def _refresh_icon(self):
+        """Re-set the status bar icon to ensure visibility."""
+        btn = self.status_item.button()
+        icon = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "macwindow.on.rectangle", "WindowLayout"
+        )
+        if icon:
+            btn.setImage_(icon)
+        else:
+            btn.setTitle_("WL")
+
     def rebuild_menu(self):
         self.layouts = load_layouts()
         menu = AppKit.NSMenu.alloc().init()
@@ -369,6 +380,7 @@ class AppDelegate(AppKit.NSObject):
 
         self.menu = menu
         self.status_item.setMenu_(self.menu)
+        self._refresh_icon()
 
     # ── Actions ──────────────────────────────────────────────────
 
@@ -403,23 +415,33 @@ class AppDelegate(AppKit.NSObject):
         """
         info = self.layouts.get(name, {})
         layout = info.get("windows", info if isinstance(info, list) else [])
-        if open_apps:
-            apps_seen = set()
+
+        def _restore_work():
+            if open_apps:
+                apps_seen = set()
+                for win in layout:
+                    if win["app"] not in apps_seen:
+                        subprocess.run(["open", "-a", win["app"]], capture_output=True)
+                        apps_seen.add(win["app"])
+                time.sleep(1.5)
             for win in layout:
-                if win["app"] not in apps_seen:
-                    subprocess.run(["open", "-a", win["app"]], capture_output=True)
-                    apps_seen.add(win["app"])
-            time.sleep(1.5)
-        for win in layout:
-            restore_window(
-                win["app"], win["title"],
-                win["x"], win["y"], win["w"], win["h"],
-            )
-        msg = f"Layout \"{name}\" restored ({len(layout)} windows)."
+                restore_window(
+                    win["app"], win["title"],
+                    win["x"], win["y"], win["w"], win["h"],
+                )
+            msg = f"Layout \"{name}\" restored ({len(layout)} windows)."
+            if notify:
+                # Schedule notification on main thread
+                AppKit.NSOperationQueue.mainQueue().addOperationWithBlock_(
+                    lambda: show_notification("WindowLayout", "Auto-restored", msg)
+                )
+
         if notify:
-            show_notification("WindowLayout", "Auto-restored", msg)
+            # Run in background thread to avoid blocking the main thread
+            threading.Thread(target=_restore_work, daemon=True).start()
         else:
-            show_alert(msg)
+            _restore_work()
+            show_alert(f"Layout \"{name}\" restored ({len(layout)} windows).")
 
     @objc.IBAction
     def restoreLayout_(self, sender):
@@ -444,6 +466,14 @@ class AppDelegate(AppKit.NSObject):
     # ── Display change ───────────────────────────────────────────
 
     def displayConfigChanged_(self, notification):
+        # Delay handling to let macOS finish reconfiguring the menu bar
+        AppKit.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            2.0, self,
+            objc.selector(self._delayedDisplayChange_, signature=b"v@:@"),
+            None, False,
+        )
+
+    def _delayedDisplayChange_(self, timer):
         fp = display_fingerprint()
         if fp != self._last_fingerprint:
             self._last_fingerprint = fp
