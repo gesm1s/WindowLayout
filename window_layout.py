@@ -23,7 +23,9 @@ STARTUP_DELAY = 30  # seconds to wait before auto-restoring at startup
 
 SKIP_APPS = frozenset((
     "Dock", "Window Server", "SystemUIServer", "Control Center",
-    "Notification Center", "WindowLayout",
+    "Notification Center", "WindowLayout", "loginwindow", "Spotlight",
+    "AutoFill", "Autoutfyll", "Open and Save Panel Service",
+    "CursorUIViewService", "GlobalProtect",
 ))
 
 
@@ -77,27 +79,67 @@ def describe_displays(screens=None):
 # ── Windows ──────────────────────────────────────────────────────
 
 def get_all_windows():
-    option = (Quartz.kCGWindowListOptionOnScreenOnly
-              | Quartz.kCGWindowListExcludeDesktopElements)
+    option = Quartz.kCGWindowListExcludeDesktopElements
     win_list = Quartz.CGWindowListCopyWindowInfo(option, Quartz.kCGNullWindowID)
+
+    # Collect windows from running apps, including non-onscreen windows.
+    # Keep size/layer filters to avoid system popups and utility overlays.
     windows = []
+    seen = set()
     for w in win_list:
         if w.get("kCGWindowLayer", 99) != 0:
             continue
         owner = w.get("kCGWindowOwnerName", "")
-        title = w.get("kCGWindowName", "")
-        bounds = w.get("kCGWindowBounds", {})
         if not owner or owner in SKIP_APPS:
             continue
+        bounds = w.get("kCGWindowBounds", {})
+        width = int(bounds.get("Width", 0))
+        height = int(bounds.get("Height", 0))
+        if width < 200 or height < 200:
+            continue
+        if width == 500 and height == 500:
+            continue
+        x = int(bounds.get("X", 0))
+        y = int(bounds.get("Y", 0))
+        key = (owner, x, y, width, height)
+        if key in seen:
+            continue
+        seen.add(key)
         windows.append({
             "app": owner,
-            "title": title,
-            "x": int(bounds.get("X", 0)),
-            "y": int(bounds.get("Y", 0)),
-            "w": int(bounds.get("Width", 800)),
-            "h": int(bounds.get("Height", 600)),
+            "title": w.get("kCGWindowName", ""),
+            "x": x,
+            "y": y,
+            "w": width,
+            "h": height,
         })
     return windows
+
+
+def format_window_capture_summary(windows, max_lines=30):
+    """Build a compact per-app summary of captured windows for diagnostics."""
+    grouped = {}
+    for win in windows:
+        app = win.get("app", "Unknown")
+        grouped.setdefault(app, []).append(win)
+
+    lines = [f"Total: {len(windows)} windows", ""]
+    for app in sorted(grouped):
+        app_wins = grouped[app]
+        lines.append(f"{app}: {len(app_wins)}")
+        for win in app_wins[:3]:
+            title = (win.get("title") or "(untitled)").strip()
+            if len(title) > 60:
+                title = title[:57] + "..."
+            lines.append(
+                f"  - {title} [{win['x']},{win['y']} {win['w']}x{win['h']}]"
+            )
+        if len(app_wins) > 3:
+            lines.append(f"  - ... +{len(app_wins) - 3} more")
+
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + ["... (truncated)"]
+    return "\n".join(lines)
 
 
 def _applescript_string(s):
@@ -146,7 +188,7 @@ def load_settings():
     if os.path.exists(SETTINGS_FILE):
         with open(SETTINGS_FILE) as f:
             return json.load(f)
-    return {"auto_restore": True}
+    return {"auto_restore": True, "diagnostics": False}
 
 
 def save_settings(data):
@@ -198,6 +240,24 @@ def show_notification(title, subtitle, message):
     notification.setInformativeText_(message)
     center = AppKit.NSUserNotificationCenter.defaultUserNotificationCenter()
     center.deliverNotification_(notification)
+
+
+def copy_to_clipboard(text):
+    pb = AppKit.NSPasteboard.generalPasteboard()
+    pb.clearContents()
+    pb.setString_forType_(text, AppKit.NSPasteboardTypeString)
+
+
+def show_diagnostics_dialog(report_text):
+    alert = AppKit.NSAlert.alloc().init()
+    alert.setMessageText_("Saved windows (diagnostics)")
+    alert.setInformativeText_(report_text)
+    alert.addButtonWithTitle_("Copy to clipboard")
+    alert.addButtonWithTitle_("Close")
+    result = alert.runModal()
+    if result == AppKit.NSAlertFirstButtonReturn:
+        copy_to_clipboard(report_text)
+        show_notification("WindowLayout", "Diagnostics", "Report copied to clipboard")
 
 
 # ── App delegate ─────────────────────────────────────────────────
@@ -369,6 +429,16 @@ class AppDelegate(AppKit.NSObject):
             auto_item.setState_(AppKit.NSControlStateValueOff)
         menu.addItem_(auto_item)
 
+        diag_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Diagnostics after save", "toggleDiagnostics:", ""
+        )
+        diag_item.setTarget_(self)
+        if self.settings.get("diagnostics", False):
+            diag_item.setState_(AppKit.NSControlStateValueOn)
+        else:
+            diag_item.setState_(AppKit.NSControlStateValueOff)
+        menu.addItem_(diag_item)
+
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         quit_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Quit", "terminate:", "q"
@@ -407,6 +477,8 @@ class AppDelegate(AppKit.NSObject):
                 f"Layout \"{name}\" saved",
                 f"{len(windows)} windows · {desc}",
             )
+            if self.settings.get("diagnostics", False):
+                show_diagnostics_dialog(format_window_capture_summary(windows))
 
     def _do_restore(self, name, notify=False, open_apps=True):
         """Restore a layout by name.
@@ -460,6 +532,13 @@ class AppDelegate(AppKit.NSObject):
     def toggleAutoRestore_(self, sender):
         current = self.settings.get("auto_restore", True)
         self.settings["auto_restore"] = not current
+        save_settings(self.settings)
+        self.rebuild_menu()
+
+    @objc.IBAction
+    def toggleDiagnostics_(self, sender):
+        current = self.settings.get("diagnostics", False)
+        self.settings["diagnostics"] = not current
         save_settings(self.settings)
         self.rebuild_menu()
 

@@ -13,6 +13,8 @@ Save and restore window layouts on macOS. Automatically detects your display con
 - **Auto-restore on startup** — after a configurable delay (30s), restores the matching layout when your Mac boots up
 - **Display detection** — identifies your setup (laptop only, laptop + external, etc.) and groups saved layouts accordingly
 - **Multiple profiles** — save different layouts for different display setups (work, home, laptop)
+- **Better window capture** — captures windows from open apps even when a window is not currently active/on-screen
+- **Optional diagnostics mode** — shows a per-app capture summary after save, with one-click copy to clipboard
 
 ## Installation
 
@@ -55,6 +57,7 @@ The app will be in `dist/WindowLayout.app`.
 3. **Restore a layout** — Click the menu bar icon → select a saved layout
 4. **Auto-restore on display change** — When you connect/disconnect a monitor and there's exactly one saved layout matching that display config, it restores automatically
 5. **Auto-restore on startup** — If enabled (on by default), WindowLayout waits 30 seconds after launch to let apps open, then repositions windows to match your saved layout. Toggle this in the menu under **Auto-restore on startup**.
+6. **Diagnostics (optional)** — Enable **Diagnostics after save** in the menu to inspect exactly which windows were captured. Use **Copy to clipboard** in the diagnostics dialog to share or troubleshoot.
 
 ### Permissions
 
@@ -69,7 +72,7 @@ To launch WindowLayout automatically:
 
 ## How it works
 
-- Each saved layout stores the position and size of every visible window, along with a fingerprint of your display configuration (resolution and arrangement)
+- Each saved layout stores the position and size of filtered app windows, including windows from open apps that are not currently active/on-screen, along with a fingerprint of your display configuration (resolution and arrangement)
 - When displays change, WindowLayout compares the new fingerprint against saved layouts
 - If exactly one layout matches, it's restored automatically; otherwise, matching layouts are highlighted in the menu
 - Window restoration uses AppleScript to set window bounds per application
@@ -82,7 +85,7 @@ To launch WindowLayout automatically:
 | `setup.py` | py2app build configuration |
 | `gen_icon.py` | Generates the app icon (`WindowLayout.icns`) |
 | `~/.window_layouts.json` | Saved layouts (created at runtime) |
-| `~/.window_layouts_settings.json` | Settings — auto-restore toggle (created at runtime) |
+| `~/.window_layouts_settings.json` | Settings — auto-restore and diagnostics toggles (created at runtime) |
 
 ## License
 
