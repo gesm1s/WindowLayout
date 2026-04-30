@@ -1,0 +1,119 @@
+name: Build WindowLayout
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'window_layout.py'
+      - 'setup.py'
+      - 'gen_icon.py'
+      - 'entitlements.plist'
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pyobjc py2app setuptools Pillow
+
+      - name: Generate app icon
+        run: python3 gen_icon.py
+
+      - name: Build app
+        run: python3 setup.py py2app
+
+      - name: Import signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+
+      - name: Sign app
+        env:
+          APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
+        run: |
+          APP="dist/WindowLayout.app"
+          # Sign embedded .so/.dylib files first (leaf nodes)
+          find "$APP" \( -name "*.so" -o -name "*.dylib" \) | while read f; do
+            codesign --force --options runtime \
+              --entitlements entitlements.plist \
+              --sign "$APPLE_SIGN_IDENTITY" "$f"
+          done
+          # Sign embedded frameworks
+          find "$APP/Contents/Frameworks" -maxdepth 1 -name "*.framework" 2>/dev/null | while read f; do
+            codesign --force --options runtime \
+              --entitlements entitlements.plist \
+              --sign "$APPLE_SIGN_IDENTITY" "$f"
+          done
+          # Sign the app bundle
+          codesign --force --options runtime \
+            --entitlements entitlements.plist \
+            --sign "$APPLE_SIGN_IDENTITY" \
+            "$APP"
+          # Verify
+          codesign --verify --deep --strict "$APP"
+
+      - name: Create ZIP for notarization
+        run: ditto -c -k --keepParent "dist/WindowLayout.app" "dist/WindowLayout-notarize.zip"
+
+      - name: Notarize app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "dist/WindowLayout-notarize.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+      - name: Staple notarization
+        run: xcrun stapler staple "dist/WindowLayout.app"
+
+      - name: Create distribution ZIP
+        run: |
+          cd dist
+          ditto -c -k --keepParent "WindowLayout.app" "WindowLayout.zip"
+          rm WindowLayout-notarize.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WindowLayout-mac
+          path: dist/WindowLayout.zip
+
+  release:
+    needs: build-mac
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/WindowLayout-mac/WindowLayout.zip
+          generate_release_notes: true

@@ -22,10 +22,17 @@ Save and restore window layouts on macOS. Automatically detects your display con
 
 1. Go to the [Releases](../../releases) page
 2. Download `WindowLayout.app.zip`
-3. Unzip and move `WindowLayout.app` to your Applications folder
-4. Double-click to launch
+3. Install with Terminal — required to avoid macOS quarantine blocking Accessibility features:
 
-> **First launch:** macOS may show a security warning. Right-click the app → Open → Open to bypass it.
+```bash
+rm -rf /Applications/WindowLayout.app
+ditto ~/Downloads/WindowLayout.app /Applications/WindowLayout.app
+xattr -cr /Applications/WindowLayout.app
+```
+
+4. Launch from Finder or Spotlight
+
+> **Why Terminal?** macOS tags apps copied via Finder with a quarantine flag (`com.apple.quarantine`). For WindowLayout this silently prevents it from moving other windows even after you grant Accessibility access. The `xattr -cr` command removes the flag. Releases built from the GitHub Actions workflow are signed and notarized — those can be installed with normal drag-and-drop without this workaround.
 
 ### Option B: Run the Python script
 
