@@ -422,6 +422,7 @@ class AppDelegate(AppKit.NSObject):
         self.settings = load_settings()
         self._last_fingerprint = display_fingerprint()
         self._restore_generation = 0  # bumped on each new restore to cancel old ones
+        self._last_auto_restored_fp = None  # fingerprint we last auto-restored to
 
         self.status_item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(
             AppKit.NSVariableStatusItemLength
@@ -455,6 +456,7 @@ class AppDelegate(AppKit.NSObject):
         matching = [n for n, v in self.layouts.items() if v.get("display_fingerprint") == fp]
         if len(matching) == 1:
             log.info("Startup: restoring '%s'", matching[0])
+            self._last_auto_restored_fp = fp
             self._do_restore(matching[0], notify=True, open_apps=False)
         else:
             log.info("Startup: %d matches, skipping", len(matching))
@@ -682,8 +684,13 @@ class AppDelegate(AppKit.NSObject):
         _log_handler.flush()
 
         if len(matching) == 1:
+            if fp == self._last_auto_restored_fp:
+                log.info("Skipping auto-restore for '%s' – already restored to this display config", matching[0])
+                _log_handler.flush()
+                return
             log.info("Auto-restoring '%s'", matching[0])
             _log_handler.flush()
+            self._last_auto_restored_fp = fp
             self._do_restore(matching[0], notify=True, open_apps=True)
         else:
             log.info("No unique match (%d), skipping", len(matching))
