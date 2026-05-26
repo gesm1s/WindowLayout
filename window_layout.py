@@ -10,6 +10,7 @@ import hashlib
 import logging
 import os
 import subprocess
+import tempfile
 import time
 import threading
 
@@ -337,23 +338,32 @@ def restore_window(app, title, x, y, w, h, cancel_check=None):
 
 def load_layouts():
     if os.path.exists(SAVE_FILE):
-        with open(SAVE_FILE) as f:
+        with open(SAVE_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
+def _atomic_json_write(path, data):
+    dir_ = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=dir_, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        os.unlink(tmp)
+        raise
+
 def save_layouts(data):
-    with open(SAVE_FILE, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    _atomic_json_write(SAVE_FILE, data)
 
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
-        with open(SETTINGS_FILE) as f:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {"auto_restore": True, "diagnostics": False}
 
 def save_settings(data):
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    _atomic_json_write(SETTINGS_FILE, data)
 
 
 # ── Dialogs ──────────────────────────────────────────────────────
@@ -417,38 +427,42 @@ class AppDelegate(AppKit.NSObject):
     def applicationDidFinishLaunching_(self, notification):
         log.info("=== WindowLayout started ===")
         _log_handler.flush()
-        check_ax_permission()
-        self.layouts = load_layouts()
-        self.settings = load_settings()
-        self._last_fingerprint = display_fingerprint()
-        self._restore_generation = 0  # bumped on each new restore to cancel old ones
-        self._last_auto_restored_fp = None  # fingerprint we last auto-restored to
+        try:
+            check_ax_permission()
+            self.layouts = load_layouts()
+            self.settings = load_settings()
+            self._last_fingerprint = display_fingerprint()
+            self._restore_generation = 0
+            self._last_auto_restored_fp = None
 
-        self.status_item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(
-            AppKit.NSVariableStatusItemLength
-        )
-        btn = self.status_item.button()
-        icon = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
-            "macwindow.on.rectangle", "WindowLayout"
-        )
-        if icon:
-            btn.setImage_(icon)
-        else:
-            btn.setTitle_("WL")
-
-        self.rebuild_menu()
-
-        AppKit.NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
-            self,
-            objc.selector(self.displayConfigChanged_, signature=b"v@:@"),
-            AppKit.NSApplicationDidChangeScreenParametersNotification,
-            None,
-        )
-
-        if self.settings.get("auto_restore", True):
-            self.performSelector_withObject_afterDelay_(
-                "startupRestore:", None, STARTUP_DELAY,
+            self.status_item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(
+                AppKit.NSVariableStatusItemLength
             )
+            btn = self.status_item.button()
+            icon = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                "macwindow.on.rectangle", "WindowLayout"
+            )
+            if icon:
+                btn.setImage_(icon)
+            else:
+                btn.setTitle_("WL")
+
+            self.rebuild_menu()
+
+            AppKit.NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+                self,
+                objc.selector(self.displayConfigChanged_, signature=b"v@:@"),
+                AppKit.NSApplicationDidChangeScreenParametersNotification,
+                None,
+            )
+
+            if self.settings.get("auto_restore", True):
+                self.performSelector_withObject_afterDelay_(
+                    "startupRestore:", None, STARTUP_DELAY,
+                )
+        except Exception as e:
+            log.exception("INIT FAILED: %s", e)
+            _log_handler.flush()
 
     def startupRestore_(self, _ignored):
         fp = display_fingerprint()
@@ -559,23 +573,34 @@ class AppDelegate(AppKit.NSObject):
 
     @objc.IBAction
     def saveLayout_(self, sender):
-        screens = get_display_config()
-        desc = describe_displays(screens)
-        name = show_input_dialog("Save window layout", f"Display config: {desc}\nName this layout:")
-        if name and name.strip():
-            name = name.strip()
-            windows = get_all_windows()
-            self.layouts[name] = {
-                "windows": windows,
-                "display_fingerprint": display_fingerprint(screens),
-                "display_description": desc,
-                "display_config": screens,
-            }
-            save_layouts(self.layouts)
-            self.rebuild_menu()
-            show_alert(f'Layout "{name}" saved', f"{len(windows)} windows · {desc}")
-            if self.settings.get("diagnostics", False):
-                show_diagnostics_dialog(format_window_capture_summary(windows))
+        try:
+            screens = get_display_config()
+            desc = describe_displays(screens)
+            name = show_input_dialog("Save window layout", f"Display config: {desc}\nName this layout:")
+            log.info("saveLayout_: dialog returned %r", name)
+            _log_handler.flush()
+            if name and name.strip():
+                name = name.strip()
+                windows = get_all_windows()
+                log.info("saveLayout_: got %d windows, saving as %r", len(windows), name)
+                _log_handler.flush()
+                self.layouts[name] = {
+                    "windows": windows,
+                    "display_fingerprint": display_fingerprint(screens),
+                    "display_description": desc,
+                    "display_config": screens,
+                }
+                save_layouts(self.layouts)
+                log.info("saveLayout_: saved OK")
+                _log_handler.flush()
+                self.rebuild_menu()
+                show_alert(f'Layout "{name}" saved', f"{len(windows)} windows · {desc}")
+                if self.settings.get("diagnostics", False):
+                    show_diagnostics_dialog(format_window_capture_summary(windows))
+        except Exception as e:
+            log.exception("saveLayout_ FAILED: %s", e)
+            _log_handler.flush()
+            show_alert("Save failed", str(e))
 
     def _do_restore(self, name, notify=False, open_apps=True):
         info = self.layouts.get(name, {})
