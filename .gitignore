@@ -4,3 +4,5 @@ dist/
 __pycache__/
 .DS_Store
 *.app.zip
+*.app/
+*.bak
