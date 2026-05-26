@@ -6,3 +6,4 @@ __pycache__/
 *.app.zip
 *.app/
 *.bak
+test_windows.py
