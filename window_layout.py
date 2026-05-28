@@ -15,7 +15,7 @@ import time
 import threading
 import urllib.request
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 GITHUB_REPO = "gesm1s/WindowLayout"
 
 import objc

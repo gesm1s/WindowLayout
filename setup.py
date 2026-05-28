@@ -8,7 +8,7 @@ OPTIONS = {
         'LSUIElement': True,
         'CFBundleName': 'WindowLayout',
         'CFBundleIdentifier': 'com.gesm.windowlayout',
-        'CFBundleShortVersionString': '1.3.0',
+        'CFBundleShortVersionString': '1.3.1',
     },
     'packages': ['objc', 'AppKit', 'Quartz'],
 }
