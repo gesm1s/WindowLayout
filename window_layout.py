@@ -13,6 +13,10 @@ import subprocess
 import tempfile
 import time
 import threading
+import urllib.request
+
+APP_VERSION = "1.3.0"
+GITHUB_REPO = "gesm1s/WindowLayout"
 
 import objc
 import AppKit
@@ -404,6 +408,25 @@ def show_notification(title, subtitle, message):
     notification.setInformativeText_(message)
     AppKit.NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
 
+def _check_for_update(callback):
+    def _run():
+        try:
+            url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            req = urllib.request.Request(url, headers={"User-Agent": f"WindowLayout/{APP_VERSION}"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.load(r)
+            tag = data.get("tag_name", "").lstrip("v")
+            def _ver(s):
+                try:
+                    return tuple(int(x) for x in s.split("."))
+                except Exception:
+                    return (0,)
+            if tag and _ver(tag) > _ver(APP_VERSION):
+                callback(tag)
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
+
 def copy_to_clipboard(text):
     pb = AppKit.NSPasteboard.generalPasteboard()
     pb.clearContents()
@@ -434,6 +457,7 @@ class AppDelegate(AppKit.NSObject):
             self._last_fingerprint = display_fingerprint()
             self._restore_generation = 0
             self._last_auto_restored_fp = None
+            self._pending_update = None
 
             self.status_item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(
                 AppKit.NSVariableStatusItemLength
@@ -460,6 +484,7 @@ class AppDelegate(AppKit.NSObject):
                 self.performSelector_withObject_afterDelay_(
                     "startupRestore:", None, STARTUP_DELAY,
                 )
+            self.performSelector_withObject_afterDelay_("checkForUpdates:", None, 5.0)
         except Exception as e:
             log.exception("INIT FAILED: %s", e)
             _log_handler.flush()
@@ -485,6 +510,74 @@ class AppDelegate(AppKit.NSObject):
             btn.setImage_(icon)
         else:
             btn.setTitle_("WL")
+        btn.setToolTip_(
+            f"WindowLayout v{APP_VERSION}" +
+            (f" — oppdatering tilgjengelig: v{self._pending_update}" if self._pending_update else "")
+        )
+
+    def checkForUpdates_(self, _):
+        def _found(version):
+            AppKit.NSOperationQueue.mainQueue().addOperationWithBlock_(
+                lambda: self._on_update_found(version)
+            )
+        _check_for_update(_found)
+
+    def _on_update_found(self, version):
+        self._pending_update = version
+        self.rebuild_menu()
+        n = AppKit.NSUserNotification.alloc().init()
+        n.setTitle_("WindowLayout – oppdatering tilgjengelig")
+        n.setInformativeText_(f"Versjon {version} er klar. Klikk på menyikonet for å oppdatere.")
+        AppKit.NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(n)
+
+    @objc.IBAction
+    def updateNow_(self, sender):
+        version = self._pending_update
+        if not version:
+            return
+        alert = AppKit.NSAlert.alloc().init()
+        alert.setMessageText_(f"Oppdater WindowLayout til v{version}?")
+        alert.setInformativeText_("Appen lastes ned og installeres automatisk. WindowLayout starter på nytt.")
+        alert.addButtonWithTitle_("Oppdater nå")
+        alert.addButtonWithTitle_("Senere")
+        if alert.runModal() != AppKit.NSAlertFirstButtonReturn:
+            return
+        threading.Thread(target=lambda: self._do_update(version), daemon=True).start()
+
+    def _do_update(self, version):
+        ZIP_URL = f"https://github.com/{GITHUB_REPO}/releases/download/v{version}/WindowLayout.zip"
+        dest = "/Applications/WindowLayout.app"
+
+        def _notify(subtitle, msg=""):
+            AppKit.NSOperationQueue.mainQueue().addOperationWithBlock_(
+                lambda: show_notification("WindowLayout", subtitle, msg)
+            )
+
+        try:
+            tmp = tempfile.mkdtemp(prefix="windowlayout_update_")
+            zip_path = os.path.join(tmp, "WindowLayout.zip")
+
+            _notify("Laster ned...", f"v{version}")
+            urllib.request.urlretrieve(ZIP_URL, zip_path)
+
+            _notify("Pakker ut...")
+            extract_dir = os.path.join(tmp, "extracted")
+            os.makedirs(extract_dir)
+            subprocess.run(["ditto", "-xk", zip_path, extract_dir], check=True)
+
+            _notify("Installerer...")
+            new_app = os.path.join(extract_dir, "WindowLayout.app")
+            subprocess.run(["rm", "-rf", dest], check=True)
+            subprocess.run(["ditto", new_app, dest], check=True)
+            subprocess.run(["xattr", "-cr", dest], check=True)
+
+            _notify("Ferdig! Starter på nytt...")
+            time.sleep(1.5)
+            subprocess.Popen(["open", dest])
+            os._exit(0)
+        except Exception as e:
+            log.exception("Auto-update failed: %s", e)
+            _notify("Oppdatering feilet", str(e))
 
     def rebuild_menu(self):
         self.layouts = load_layouts()
@@ -492,6 +585,15 @@ class AppDelegate(AppKit.NSObject):
         screens = get_display_config()
         fp = display_fingerprint(screens)
         desc = describe_displays(screens)
+
+        if self._pending_update:
+            upd = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                f"🆕  Oppdater til v{self._pending_update}...", "updateNow:", "")
+            upd.setTarget_(self)
+            upd.setImage_(AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                "arrow.down.circle", None))
+            menu.addItem_(upd)
+            menu.addItem_(AppKit.NSMenuItem.separatorItem())
 
         header = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(desc, None, "")
         header.setEnabled_(False)

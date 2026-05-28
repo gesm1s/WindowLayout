@@ -58,12 +58,39 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1)
+
+          BODY=$(awk "
+            /^## \[${VERSION}\]/{found=1; next}
+            found && /^## \[/{exit}
+            found{print}
+          " CHANGELOG.md | sed \
+            -e 's/^### Fixed$/## Fikser/' \
+            -e 's/^### Added$/## Nytt/' \
+            -e 's/^### Changed$/## Endringer/' \
+            -e 's/^### Improved$/## Forbedringer/' \
+            -e 's/^### Removed$/## Fjernet/')
+
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/WindowLayout-mac/WindowLayout.zip
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}
