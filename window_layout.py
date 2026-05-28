@@ -663,6 +663,11 @@ class AppDelegate(AppKit.NSObject):
         menu.addItem_(di)
 
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
+        vi = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(f"WindowLayout v{APP_VERSION}", None, "")
+        vi.setEnabled_(False)
+        vi.setImage_(AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_("info.circle", None))
+        menu.addItem_(vi)
+
         qi = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Quit", "terminate:", "q")
         qi.setImage_(AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_("xmark.circle", None))
         menu.addItem_(qi)
