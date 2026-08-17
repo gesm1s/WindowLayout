@@ -82,7 +82,7 @@ To launch WindowLayout automatically:
 - Each saved layout stores the position and size of filtered app windows, including windows from open apps that are not currently active/on-screen, along with a fingerprint of your display configuration (resolution and arrangement)
 - When displays change, WindowLayout compares the new fingerprint against saved layouts
 - If exactly one layout matches, it's restored automatically; otherwise, matching layouts are highlighted in the menu
-- Window restoration uses AppleScript to set window bounds per application
+- Window restoration moves windows for applications that are already running; it does not launch closed applications
 
 ## Files
 

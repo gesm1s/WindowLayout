@@ -15,7 +15,7 @@ import time
 import threading
 import urllib.request
 
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 GITHUB_REPO = "gesm1s/WindowLayout"
 
 import objc
@@ -271,14 +271,21 @@ def _applescript_string(s):
 def _restore_window_applescript(app, x, y, w, h):
     app_str = _applescript_string(app)
     script = (
-        f'tell application {app_str}\n'
-        f'  if (count of windows) > 0 then\n'
-        f'    try\n'
-        f'      set bounds of window 1 to {{{x}, {y}, {x+w}, {y+h}}}\n'
-        f'      return "ok"\n'
-        f'    on error\n'
-        f'      return "error"\n'
-        f'    end try\n'
+        'tell application "System Events"\n'
+        f'  if exists process {app_str} then\n'
+        f'    tell process {app_str}\n'
+        f'      if (count of windows) > 0 then\n'
+        f'        try\n'
+        f'          set position of window 1 to {{{x}, {y}}}\n'
+        f'          set size of window 1 to {{{w}, {h}}}\n'
+        f'          return "ok"\n'
+        f'        on error\n'
+        f'          return "error"\n'
+        f'        end try\n'
+        f'      else\n'
+        f'        return "notfound"\n'
+        f'      end if\n'
+        f'    end tell\n'
         f'  else\n'
         f'    return "notfound"\n'
         f'  end if\n'
@@ -325,7 +332,7 @@ def restore_window(app, title, x, y, w, h, cancel_check=None):
                 _log_handler.flush()
                 return True
 
-        if _restore_window_applescript(app, x, y, w, h):
+        if pid and _restore_window_applescript(app, x, y, w, h):
             log.debug("AS OK: %s -> (%d,%d %dx%d)", app, x, y, w, h)
             _log_handler.flush()
             return True
@@ -379,13 +386,16 @@ def show_alert(message, info=""):
         alert.setInformativeText_(info)
     alert.runModal()
 
-def show_input_dialog(title, message, default_text=""):
+def show_layout_name_dialog(title, message, layout_names, default_text=""):
     alert = AppKit.NSAlert.alloc().init()
     alert.setMessageText_(title)
     alert.setInformativeText_(message)
     alert.addButtonWithTitle_("Save")
     alert.addButtonWithTitle_("Cancel")
-    field = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 300, 24))
+    field = AppKit.NSComboBox.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 300, 26))
+    field.setEditable_(True)
+    field.setCompletes_(True)
+    field.addItemsWithObjectValues_(sorted(layout_names, key=str.casefold))
     field.setStringValue_(default_text)
     alert.setAccessoryView_(field)
     alert.window().setInitialFirstResponder_(field)
@@ -496,7 +506,7 @@ class AppDelegate(AppKit.NSObject):
         if len(matching) == 1:
             log.info("Startup: restoring '%s'", matching[0])
             self._last_auto_restored_fp = fp
-            self._do_restore(matching[0], notify=True, open_apps=False)
+            self._do_restore(matching[0], notify=True)
         else:
             log.info("Startup: %d matches, skipping", len(matching))
         _log_handler.flush()
@@ -683,11 +693,20 @@ class AppDelegate(AppKit.NSObject):
         try:
             screens = get_display_config()
             desc = describe_displays(screens)
-            name = show_input_dialog("Save window layout", f"Display config: {desc}\nName this layout:")
+            name = show_layout_name_dialog(
+                "Save window layout",
+                f"Display config: {desc}\nChoose an existing layout to update, or enter a new name:",
+                self.layouts,
+            )
             log.info("saveLayout_: dialog returned %r", name)
             _log_handler.flush()
             if name and name.strip():
                 name = name.strip()
+                if name in self.layouts and not show_confirm(
+                    f'Update "{name}"?',
+                    "The saved windows in this layout will be replaced.",
+                ):
+                    return
                 windows = get_all_windows()
                 log.info("saveLayout_: got %d windows, saving as %r", len(windows), name)
                 _log_handler.flush()
@@ -709,12 +728,12 @@ class AppDelegate(AppKit.NSObject):
             _log_handler.flush()
             show_alert("Save failed", str(e))
 
-    def _do_restore(self, name, notify=False, open_apps=True):
+    def _do_restore(self, name, notify=False):
         info = self.layouts.get(name, {})
         layout = info.get("windows", info if isinstance(info, list) else [])
         self._restore_generation += 1
         gen = self._restore_generation
-        log.info("_do_restore '%s': %d windows, notify=%s, open_apps=%s, gen=%d", name, len(layout), notify, open_apps, gen)
+        log.info("_do_restore '%s': %d windows, notify=%s, gen=%d", name, len(layout), notify, gen)
         _log_handler.flush()
 
         def _cancelled():
@@ -725,16 +744,6 @@ class AppDelegate(AppKit.NSObject):
                 log.info("Restore '%s' cancelled before start (gen %d)", name, gen)
                 _log_handler.flush()
                 return
-            if open_apps:
-                apps_seen = set()
-                for win in layout:
-                    if win["app"] not in apps_seen:
-                        try:
-                            subprocess.run(["open", "-a", win["app"]], capture_output=True, timeout=SUBPROCESS_TIMEOUT)
-                        except subprocess.TimeoutExpired:
-                            pass
-                        apps_seen.add(win["app"])
-                time.sleep(2.0)
             for p in range(RESTORE_PASSES):
                 if _cancelled():
                     log.info("Restore '%s' cancelled at pass %d (gen %d)", name, p + 1, gen)
@@ -823,7 +832,7 @@ class AppDelegate(AppKit.NSObject):
             log.info("Auto-restoring '%s'", matching[0])
             _log_handler.flush()
             self._last_auto_restored_fp = fp
-            self._do_restore(matching[0], notify=True, open_apps=True)
+            self._do_restore(matching[0], notify=True)
         else:
             log.info("No unique match (%d), skipping", len(matching))
             _log_handler.flush()
