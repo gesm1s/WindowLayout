@@ -15,7 +15,7 @@ import time
 import threading
 import urllib.request
 
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.3.3"
 GITHUB_REPO = "gesm1s/WindowLayout"
 
 import objc
@@ -45,7 +45,8 @@ log.addHandler(_log_handler)
 
 SAVE_FILE = os.path.expanduser("~/.window_layouts.json")
 SETTINGS_FILE = os.path.expanduser("~/.window_layouts_settings.json")
-STARTUP_DELAY = 30
+DEFAULT_STARTUP_RESTORE_DELAY = 30
+MAX_STARTUP_RESTORE_DELAY = 3600
 RESTORE_RETRIES = 1
 RESTORE_RETRY_DELAY = 0.3
 RESTORE_PASSES = 2
@@ -371,7 +372,12 @@ def load_settings():
     if os.path.exists(SETTINGS_FILE):
         with open(SETTINGS_FILE, encoding="utf-8") as f:
             return json.load(f)
-    return {"auto_restore": True, "diagnostics": False}
+    return {
+        "auto_restore": True,
+        "diagnostics": False,
+        "open_closed_apps": False,
+        "startup_restore_delay": DEFAULT_STARTUP_RESTORE_DELAY,
+    }
 
 def save_settings(data):
     _atomic_json_write(SETTINGS_FILE, data)
@@ -403,13 +409,27 @@ def show_layout_name_dialog(title, message, layout_names, default_text=""):
         return field.stringValue()
     return None
 
-def show_confirm(title, message):
+def show_confirm(title, message, confirm_title="Delete"):
     alert = AppKit.NSAlert.alloc().init()
     alert.setMessageText_(title)
     alert.setInformativeText_(message)
-    alert.addButtonWithTitle_("Delete")
+    alert.addButtonWithTitle_(confirm_title)
     alert.addButtonWithTitle_("Cancel")
     return alert.runModal() == AppKit.NSAlertFirstButtonReturn
+
+def show_text_input_dialog(title, message, default_text):
+    alert = AppKit.NSAlert.alloc().init()
+    alert.setMessageText_(title)
+    alert.setInformativeText_(message)
+    alert.addButtonWithTitle_("Save")
+    alert.addButtonWithTitle_("Cancel")
+    field = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 120, 24))
+    field.setStringValue_(default_text)
+    alert.setAccessoryView_(field)
+    alert.window().setInitialFirstResponder_(field)
+    if alert.runModal() == AppKit.NSAlertFirstButtonReturn:
+        return field.stringValue()
+    return None
 
 def show_notification(title, subtitle, message):
     notification = AppKit.NSUserNotification.alloc().init()
@@ -431,10 +451,11 @@ def _check_for_update(callback):
                     return tuple(int(x) for x in s.split("."))
                 except Exception:
                     return (0,)
-            if tag and _ver(tag) > _ver(APP_VERSION):
-                callback(tag)
-        except Exception:
-            pass
+            callback(tag if tag and _ver(tag) > _ver(APP_VERSION) else None, None)
+        except Exception as e:
+            log.warning("Update check failed: %s", e)
+            _log_handler.flush()
+            callback(None, str(e))
     threading.Thread(target=_run, daemon=True).start()
 
 def copy_to_clipboard(text):
@@ -490,13 +511,27 @@ class AppDelegate(AppKit.NSObject):
                 None,
             )
 
-            if self.settings.get("auto_restore", True):
-                self.performSelector_withObject_afterDelay_(
-                    "startupRestore:", None, STARTUP_DELAY,
-                )
+            self._schedule_startup_restore()
             self.performSelector_withObject_afterDelay_("checkForUpdates:", None, 5.0)
         except Exception as e:
             log.exception("INIT FAILED: %s", e)
+            _log_handler.flush()
+
+    def _startup_restore_delay(self):
+        try:
+            delay = int(self.settings.get("startup_restore_delay", DEFAULT_STARTUP_RESTORE_DELAY))
+        except (TypeError, ValueError):
+            return DEFAULT_STARTUP_RESTORE_DELAY
+        return max(0, min(delay, MAX_STARTUP_RESTORE_DELAY))
+
+    def _schedule_startup_restore(self):
+        AppKit.NSObject.cancelPreviousPerformRequestsWithTarget_selector_object_(
+            self, "startupRestore:", None,
+        )
+        if self.settings.get("auto_restore", True):
+            delay = self._startup_restore_delay()
+            log.info("Scheduling startup restore in %d seconds", delay)
+            self.performSelector_withObject_afterDelay_("startupRestore:", None, delay)
             _log_handler.flush()
 
     def startupRestore_(self, _ignored):
@@ -526,11 +561,28 @@ class AppDelegate(AppKit.NSObject):
         )
 
     def checkForUpdates_(self, _):
-        def _found(version):
+        self._start_update_check(manual=False)
+
+    def _start_update_check(self, manual):
+        log.info("Checking for updates (manual=%s)", manual)
+        _log_handler.flush()
+
+        def _completed(version, error):
             AppKit.NSOperationQueue.mainQueue().addOperationWithBlock_(
-                lambda: self._on_update_found(version)
+                lambda: self._on_update_check_completed(version, error, manual)
             )
-        _check_for_update(_found)
+
+        _check_for_update(_completed)
+
+    def _on_update_check_completed(self, version, error, manual):
+        if error:
+            if manual:
+                show_alert("Could not check for updates", error)
+            return
+        if version:
+            self._on_update_found(version)
+        elif manual:
+            show_alert("No update available", f"WindowLayout v{APP_VERSION} is up to date.")
 
     def _on_update_found(self, version):
         self._pending_update = version
@@ -605,6 +657,16 @@ class AppDelegate(AppKit.NSObject):
             menu.addItem_(upd)
             menu.addItem_(AppKit.NSMenuItem.separatorItem())
 
+        check_updates = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Check for updates...", "checkForUpdatesManually:", "",
+        )
+        check_updates.setTarget_(self)
+        check_updates.setImage_(AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "arrow.clockwise", None,
+        ))
+        menu.addItem_(check_updates)
+        menu.addItem_(AppKit.NSMenuItem.separatorItem())
+
         header = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(desc, None, "")
         header.setEnabled_(False)
         header.setImage_(AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_("display", None))
@@ -667,6 +729,23 @@ class AppDelegate(AppKit.NSObject):
         ai.setState_(AppKit.NSControlStateValueOn if self.settings.get("auto_restore", True) else AppKit.NSControlStateValueOff)
         menu.addItem_(ai)
 
+        delay = self._startup_restore_delay()
+        startup_delay = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            f"Startup restore delay... ({delay} seconds)", "setStartupRestoreDelay:", "",
+        )
+        startup_delay.setTarget_(self)
+        startup_delay.setImage_(AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "clock", None,
+        ))
+        menu.addItem_(startup_delay)
+
+        open_closed = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Open closed apps when restoring", "toggleOpenClosedApps:", "",
+        )
+        open_closed.setTarget_(self)
+        open_closed.setState_(AppKit.NSControlStateValueOn if self.settings.get("open_closed_apps", False) else AppKit.NSControlStateValueOff)
+        menu.addItem_(open_closed)
+
         di = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Diagnostics after save", "toggleDiagnostics:", "")
         di.setTarget_(self)
         di.setState_(AppKit.NSControlStateValueOn if self.settings.get("diagnostics", False) else AppKit.NSControlStateValueOff)
@@ -705,6 +784,7 @@ class AppDelegate(AppKit.NSObject):
                 if name in self.layouts and not show_confirm(
                     f'Update "{name}"?',
                     "The saved windows in this layout will be replaced.",
+                    "Update",
                 ):
                     return
                 windows = get_all_windows()
@@ -731,9 +811,10 @@ class AppDelegate(AppKit.NSObject):
     def _do_restore(self, name, notify=False):
         info = self.layouts.get(name, {})
         layout = info.get("windows", info if isinstance(info, list) else [])
+        open_closed_apps = self.settings.get("open_closed_apps", False)
         self._restore_generation += 1
         gen = self._restore_generation
-        log.info("_do_restore '%s': %d windows, notify=%s, gen=%d", name, len(layout), notify, gen)
+        log.info("_do_restore '%s': %d windows, notify=%s, open_closed_apps=%s, gen=%d", name, len(layout), notify, open_closed_apps, gen)
         _log_handler.flush()
 
         def _cancelled():
@@ -744,6 +825,21 @@ class AppDelegate(AppKit.NSObject):
                 log.info("Restore '%s' cancelled before start (gen %d)", name, gen)
                 _log_handler.flush()
                 return
+            if open_closed_apps:
+                apps_seen = set()
+                for win in layout:
+                    app = win["app"]
+                    if app not in apps_seen:
+                        try:
+                            result = subprocess.run(
+                                ["open", "-a", app], capture_output=True, timeout=SUBPROCESS_TIMEOUT,
+                            )
+                            if result.returncode != 0:
+                                log.warning("Could not open %s: %s", app, result.stderr.decode("utf-8", errors="replace"))
+                        except subprocess.TimeoutExpired:
+                            log.warning("Timed out opening %s", app)
+                        apps_seen.add(app)
+                time.sleep(2.0)
             for p in range(RESTORE_PASSES):
                 if _cancelled():
                     log.info("Restore '%s' cancelled at pass %d (gen %d)", name, p + 1, gen)
@@ -786,7 +882,41 @@ class AppDelegate(AppKit.NSObject):
     def toggleAutoRestore_(self, sender):
         self.settings["auto_restore"] = not self.settings.get("auto_restore", True)
         save_settings(self.settings)
+        self._schedule_startup_restore()
         self.rebuild_menu()
+
+    @objc.IBAction
+    def setStartupRestoreDelay_(self, sender):
+        delay = self._startup_restore_delay()
+        value = show_text_input_dialog(
+            "Startup restore delay",
+            f"Enter a delay from 0 to {MAX_STARTUP_RESTORE_DELAY} seconds.",
+            str(delay),
+        )
+        if value is None:
+            return
+        try:
+            delay = int(value.strip())
+        except ValueError:
+            show_alert("Invalid delay", "Enter a whole number of seconds.")
+            return
+        if not 0 <= delay <= MAX_STARTUP_RESTORE_DELAY:
+            show_alert("Invalid delay", f"Enter a value from 0 to {MAX_STARTUP_RESTORE_DELAY} seconds.")
+            return
+        self.settings["startup_restore_delay"] = delay
+        save_settings(self.settings)
+        self._schedule_startup_restore()
+        self.rebuild_menu()
+
+    @objc.IBAction
+    def toggleOpenClosedApps_(self, sender):
+        self.settings["open_closed_apps"] = not self.settings.get("open_closed_apps", False)
+        save_settings(self.settings)
+        self.rebuild_menu()
+
+    @objc.IBAction
+    def checkForUpdatesManually_(self, sender):
+        self._start_update_check(manual=True)
 
     @objc.IBAction
     def toggleDiagnostics_(self, sender):

@@ -4,7 +4,14 @@ All notable changes to WindowLayout are documented here.
 
 ## [Unreleased]
 
-No user-facing changes since v1.3.2.
+No user-facing changes since v1.3.3.
+
+## [1.3.3] – 2026-08-17
+
+### Added
+- Added an option to open closed applications before restoring a layout.
+- Added a menu action to check for updates without restarting the app.
+- Added a configurable startup restore delay.
 
 ## [1.3.2] – 2026-08-17
 
@@ -52,7 +59,8 @@ No user-facing changes since v1.3.2.
 ### Added
 - Initial release of the WindowLayout menu bar app for saving and restoring window layouts.
 
-[Unreleased]: https://github.com/gesm1s/WindowLayout/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/gesm1s/WindowLayout/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/gesm1s/WindowLayout/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/gesm1s/WindowLayout/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/gesm1s/WindowLayout/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/gesm1s/WindowLayout/compare/v1.2.1...v1.3.0
