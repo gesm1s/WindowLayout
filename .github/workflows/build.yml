@@ -66,27 +66,17 @@ jobs:
         with:
           path: artifacts
 
-      - name: Extract release notes from CHANGELOG
+      - name: Extract complete release notes from CHANGELOG
         id: notes
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1)
-
-          BODY=$(awk "
-            /^## \[${VERSION}\]/{found=1; next}
-            found && /^## \[/{exit}
+          BODY=$(awk '
+            /^## \[[0-9]/{found=1}
+            found && /^\[/{exit}
             found{print}
-          " CHANGELOG.md | sed \
-            -e 's/^### Fixed$/## Fikser/' \
-            -e 's/^### Added$/## Nytt/' \
-            -e 's/^### Changed$/## Endringer/' \
-            -e 's/^### Improved$/## Forbedringer/' \
-            -e 's/^### Removed$/## Fjernet/')
+          ' CHANGELOG.md)
 
           echo "body<<EOF" >> $GITHUB_OUTPUT
           echo "$BODY" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release

@@ -9,48 +9,48 @@ No user-facing changes since v1.3.2.
 ## [1.3.2] – 2026-08-17
 
 ### Fixed
-- Lagre-dialogen lar deg velge en eksisterende layout og oppdatere den etter bekreftelse.
-- Gjenoppretting åpner ikke lenger apper som er lukket.
+- The save dialog lets you select and update an existing layout after confirmation.
+- Restoring a layout no longer opens applications that are closed.
 
 ## [1.3.1] – 2026-05-28
 
 ### Added
-- Versjonsnummer vises nederst i menyen (ikon + «WindowLayout v1.3.1»)
+- The version number is shown at the bottom of the menu.
 
 ## [1.3.0] – 2026-05-28
 
 ### Added
-- Sjekker GitHub for oppdateringer ved oppstart (5 sekunder etter start)
-- Varsel via macOS-varslinger og tooltip på menyikonet når ny versjon er tilgjengelig
-- «Oppdater nå»-element øverst i menyen ved ny versjon
-- Auto-update: laster ned ZIP, pakker ut med `ditto -xk`, installerer og starter appen på nytt automatisk
+- Checks GitHub for updates five seconds after startup.
+- Shows a macOS notification and menu bar tooltip when a new version is available.
+- Adds an "Update now" menu item when a new version is available.
+- Downloads, installs, and restarts the app automatically when updating.
 
 ## [1.2.1] – 2026-05-06
 
 ### Fixed
-- Bygge-fiks
+- Build fix.
 
 ## [1.2.0] – 2026-05-06
 
 ### Improved
-- Bedre gjenoppretting av vindusposisjoner
-- Forbedret vindusregistrering og diagnostikkmodus
+- Improved window position restoration.
+- Improved window detection and diagnostics mode.
 
 ## [1.1.1] – 2026-03-13
 
 ### Fixed
-- Menylinjeikon forsvant ved skjermbytte
+- Fixed the menu bar icon disappearing after a display change.
 
 ## [1.1.0] – 2026-03-12
 
 ### Added
-- Auto-gjenoppretting ved oppstart med 30 sekunders forsinkelse
-- Innstilling for å skru av/på auto-gjenoppretting
+- Added automatic layout restoration 30 seconds after startup.
+- Added a setting to enable or disable automatic restoration.
 
 ## [1.0.0] – 2026-03-12
 
 ### Added
-- Første release: WindowLayout menylinjeapp for lagring og gjenoppretting av vindusoppsett
+- Initial release of the WindowLayout menu bar app for saving and restoring window layouts.
 
 [Unreleased]: https://github.com/gesm1s/WindowLayout/compare/v1.3.2...HEAD
 [1.3.2]: https://github.com/gesm1s/WindowLayout/compare/v1.3.1...v1.3.2
