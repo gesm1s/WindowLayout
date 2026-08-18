@@ -88,6 +88,10 @@ To launch WindowLayout automatically:
 - If exactly one layout matches, it's restored automatically; otherwise, matching layouts are highlighted in the menu
 - Window restoration moves windows for applications that are already running; it can also launch closed applications when that option is enabled
 
+### macOS Spaces
+
+WindowLayout saves and restores window position and size, but it does not move windows between macOS Spaces (desktops). macOS decides which Space an application opens in; once it is there, WindowLayout can restore its window geometry.
+
 ## Files
 
 | File | Description |
